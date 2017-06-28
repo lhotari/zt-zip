@@ -21,12 +21,14 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UnsupportedEncodingException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.zip.Deflater;
@@ -846,6 +848,46 @@ public class ZipUtilTest extends TestCase {
       }
   }
 
+    public void testMultipleZipsInSingleInputStream() throws IOException {
+        int loopCount = 3;
+
+        ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
+
+        File src = file("demo.zip");
+        InputStream zipInput = new FileInputStream(src);
+        byte[] srcBytes = IOUtils.toByteArray(zipInput);
+        zipInput.close();
+
+        for (int i = 0; i < loopCount; i++) {
+            byteArrayOutputStream.write(srcBytes);
+        }
+
+        final Set expectedFiles = new LinkedHashSet();
+        expectedFiles.add("foo.txt");
+        expectedFiles.add("bar.txt");
+        expectedFiles.add("foo1.txt");
+        expectedFiles.add("foo2.txt");
+
+        CountingInputStream srcStream = new CountingInputStream(new ByteArrayInputStream(byteArrayOutputStream.toByteArray()));
+        for (int i = 0; i < loopCount; i++) {
+            assertEquals(expectedFiles, listFiles(srcStream));
+            assertEquals((i+1) * srcBytes.length, srcStream.getBytesRead());
+        }
+    }
+
+    private Set listFiles(InputStream src) {
+        final Set allFiles = new LinkedHashSet();
+        ZipUtil.iterate(src, new ZipEntryCallback() {
+            public void process(InputStream in, ZipEntry zipEntry) throws IOException {
+                allFiles.add(zipEntry.getName());
+                int entrySize = (int) zipEntry.getSize();
+                byte[] buffer = new byte[entrySize];
+                assertEquals(entrySize, in.read(buffer));
+            }
+        });
+        return allFiles;
+    }
+
   public void testReplaceEntryWithCompressionMethod() throws IOException {
     File initialSrc = file("demo.zip");
     File src = File.createTempFile("ztr", ".zip");
@@ -889,4 +931,40 @@ public class ZipUtilTest extends TestCase {
     file = new File(file, "testFileInTestSubdirectory.txt");
     assertTrue("The 'testFileInTestSubdirectory.txt' is not a file", file.isFile());
   }
+
+    static class CountingInputStream extends FilterInputStream {
+        private long count;
+
+        public CountingInputStream(InputStream in) {
+            super(in);
+        }
+
+        public int read(byte[] b) throws IOException {
+            int found = super.read(b);
+            this.count += (found >= 0) ? found : 0;
+            return found;
+        }
+
+        public int read(byte[] b, int off, int len) throws IOException {
+            int found = super.read(b, off, len);
+            this.count += (found >= 0) ? found : 0;
+            return found;
+        }
+
+        public int read() throws IOException {
+            int found = super.read();
+            this.count += (found >= 0) ? 1 : 0;
+            return found;
+        }
+
+        public long skip(final long length) throws IOException {
+            final long skip = super.skip(length);
+            this.count += skip;
+            return skip;
+        }
+
+        public long getBytesRead() {
+            return this.count;
+        }
+    }
 }
